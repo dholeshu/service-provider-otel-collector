@@ -32,13 +32,18 @@ func ReconcileImagePullSecrets(ctx context.Context, mcpClient client.Client, ns 
 			dst.Labels = map[string]string{
 				ManagedByLabel: ManagedByValue,
 			}
-			return mcpClient.Create(ctx, dst)
+			if err := mcpClient.Create(ctx, dst); err != nil {
+				return fmt.Errorf("creating image pull secret %q in MCP: %w", ref.Name, err)
+			}
+			continue
 		}
 		if err != nil {
 			return err
 		}
 		dst.Data = src.Data
-		return mcpClient.Update(ctx, dst)
+		if err := mcpClient.Update(ctx, dst); err != nil {
+			return fmt.Errorf("updating image pull secret %q in MCP: %w", ref.Name, err)
+		}
 	}
 	return nil
 }
