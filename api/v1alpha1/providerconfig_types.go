@@ -19,43 +19,44 @@ package v1alpha1
 import (
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // ProviderConfigSpec defines the desired state of ProviderConfig
 type ProviderConfigSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of ProviderConfig. Edit providerconfig_types.go to remove/update
 	// +optional
 	// +kubebuilder:default:="1m"
 	// +kubebuilder:validation:Format=duration
 	PollInterval *metav1.Duration `json:"pollInterval,omitempty"`
+
+	// Default OTEL collector container image
+	// +optional
+	// +kubebuilder:default:="otel/opentelemetry-collector-contrib"
+	DefaultImage *string `json:"defaultImage,omitempty"`
+
+	// Default OTEL collector image tag
+	// +optional
+	// +kubebuilder:default:="0.146.1"
+	DefaultVersion *string `json:"defaultVersion,omitempty"`
+
+	// Image pull secrets on platform cluster, synced to MCP
+	// +optional
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
+	// Default compute resource requirements
+	// +optional
+	DefaultResources *corev1.ResourceRequirements `json:"defaultResources,omitempty"`
+
+	// Default target namespace in MCP
+	// +optional
+	// +kubebuilder:default:="observability"
+	DefaultNamespace *string `json:"defaultNamespace,omitempty"`
 }
 
 // ProviderConfigStatus defines the observed state of ProviderConfig.
 type ProviderConfigStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
 	// conditions represent the current state of the ProviderConfig resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -98,6 +99,8 @@ func init() {
 
 // PollInterval returns the poll interval duration from the spec.
 func (o *ProviderConfig) PollInterval() time.Duration {
-	// TODO pollInterval has to be required
+	if o.Spec.PollInterval == nil {
+		return time.Minute
+	}
 	return o.Spec.PollInterval.Duration
 }

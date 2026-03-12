@@ -1,6 +1,9 @@
-apiVersion: foo.services.openmcp.cloud/v1alpha1
+apiVersion: otelcollector.services.openmcp.cloud/v1alpha1
 kind: ProviderConfig
 metadata:
-  name: default
+  name: otelcollectorservice
 spec:
   pollInterval: 1m
+  defaultImage: "otel/opentelemetry-collector-contrib"
+  defaultVersion: "0.146.1"
+  defaultNamespace: "observability"

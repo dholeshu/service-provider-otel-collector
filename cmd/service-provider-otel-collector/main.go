@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"os"
 	"time"
 
@@ -30,14 +31,13 @@ import (
 	crdutil "github.com/openmcp-project/controller-utils/pkg/crds"
 	"github.com/openmcp-project/controller-utils/pkg/logging"
 	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
-	"github.com/openmcp-project/openmcp-operator/api/common"
 	openmcpconst "github.com/openmcp-project/openmcp-operator/api/constants"
 	providerv1alpha1 "github.com/openmcp-project/openmcp-operator/api/provider/v1alpha1"
 	"github.com/openmcp-project/openmcp-operator/lib/clusteraccess"
 	"github.com/openmcp-project/openmcp-operator/lib/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/openmcp-project/service-provider-template/api/crds"
+	"github.com/openmcp-project/service-provider-otel-collector/api/crds"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -51,10 +51,10 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	"github.com/openmcp-project/service-provider-template/pkg/spruntime"
+	"github.com/openmcp-project/service-provider-otel-collector/pkg/spruntime"
 
-	{{.KindLower}}sv1alpha1 "github.com/openmcp-project/service-provider-template/api/v1alpha1"
-	"github.com/openmcp-project/service-provider-template/internal/controller"
+	otelcollectorservicesv1alpha1 "github.com/openmcp-project/service-provider-otel-collector/api/v1alpha1"
+	"github.com/openmcp-project/service-provider-otel-collector/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -62,9 +62,6 @@ var (
 	platformScheme   = runtime.NewScheme()
 	onboardingScheme = runtime.NewScheme()
 	mcpScheme        = runtime.NewScheme()
-{{- if .WithWorkloadCluster }}
-	workloadScheme   = runtime.NewScheme()
-{{- end }}
 	setupLog         = ctrl.Log.WithName("setup")
 )
 
@@ -73,15 +70,12 @@ func init() {
 	initPlatformScheme()
 	initOnboardingScheme()
 	initMcpScheme()
-{{- if .WithWorkloadCluster }}
-	initWorkloadScheme()
-{{- end }}
 }
 
 func initPlatformScheme() {
 	utilruntime.Must(clientgoscheme.AddToScheme(platformScheme))
 	utilruntime.Must(apiextensionv1.AddToScheme(platformScheme))
-	utilruntime.Must({{.KindLower}}sv1alpha1.AddToScheme(platformScheme))
+	utilruntime.Must(otelcollectorservicesv1alpha1.AddToScheme(platformScheme))
 	utilruntime.Must(clustersv1alpha1.AddToScheme(platformScheme))
 	utilruntime.Must(providerv1alpha1.AddToScheme(platformScheme))
 }
@@ -89,19 +83,13 @@ func initPlatformScheme() {
 func initOnboardingScheme() {
 	utilruntime.Must(clientgoscheme.AddToScheme(onboardingScheme))
 	utilruntime.Must(apiextensionv1.AddToScheme(onboardingScheme))
-	utilruntime.Must({{.KindLower}}sv1alpha1.AddToScheme(onboardingScheme))
+	utilruntime.Must(otelcollectorservicesv1alpha1.AddToScheme(onboardingScheme))
 }
 
 func initMcpScheme() {
 	utilruntime.Must(clientgoscheme.AddToScheme(mcpScheme))
 	utilruntime.Must(apiextensionv1.AddToScheme(mcpScheme))
 }
-
-{{- if .WithWorkloadCluster }}
-func initWorkloadScheme() {
-	utilruntime.Must(clientgoscheme.AddToScheme(workloadScheme))
-}
-{{- end }}
 
 // nolint:gocyclo
 func main() {
@@ -229,21 +217,39 @@ func main() {
 		setupLog.Error(fmt.Errorf("environment variable %s not set - cannot determine source namespace for secrets", openmcpconst.EnvVariablePodNamespace), "pod namespace missing")
 		os.Exit(1)
 	}
-	// TODO: define minimum set of permission required to run the init and run part of your service provider
-	adminPermissions := []clustersv1alpha1.PermissionsRequest{
+	mcpPermissions := []clustersv1alpha1.PermissionsRequest{
 		{
-
 			Rules: []rbacv1.PolicyRule{
 				{
-					APIGroups: []string{"*"},
-					Resources: []string{"*"},
-					Verbs:     []string{"*"},
+					APIGroups: []string{""},
+					Resources: []string{"namespaces"},
+					Verbs:     []string{"get", "create"},
+				},
+				{
+					APIGroups: []string{""},
+					Resources: []string{"configmaps"},
+					Verbs:     []string{"get"},
+				},
+				{
+					APIGroups: []string{""},
+					Resources: []string{"secrets"},
+					Verbs:     []string{"get", "list", "create", "update"},
+				},
+				{
+					APIGroups: []string{""},
+					Resources: []string{"services"},
+					Verbs:     []string{"get", "list", "create", "update", "delete"},
+				},
+				{
+					APIGroups: []string{"apps"},
+					Resources: []string{"deployments"},
+					Verbs:     []string{"get", "list", "create", "update", "delete"},
 				},
 			},
 		},
 	}
 	clusterAccessManager := clusteraccess.NewClusterAccessManager(platformCluster.Client(),
-		"{{.KindLower}}.{{.Group}}.services.openmcp.cloud", os.Getenv("POD_NAMESPACE"))
+		"otelcollectorservice.otelcollector.services.openmcp.cloud", os.Getenv("POD_NAMESPACE"))
 	clusterAccessManager.WithLogger(&log).
 		WithInterval(10 * time.Second).
 		WithTimeout(30 * time.Minute)
@@ -251,7 +257,7 @@ func main() {
 	// init (job that installs CRDs)
 	if command == "init" {
 		onboardingCluster, err := clusterAccessManager.CreateAndWaitForCluster(ctx, "onboarding-init",
-			clustersv1alpha1.PURPOSE_ONBOARDING, onboardingScheme, adminPermissions)
+			clustersv1alpha1.PURPOSE_ONBOARDING, onboardingScheme, mcpPermissions)
 
 		if err != nil {
 			setupLog.Error(err, "Failed to create and wait for onboarding cluster access")
@@ -267,9 +273,9 @@ func main() {
 		}
 
 		spGVK := metav1.GroupVersionKind{
-			Group:   {{.KindLower}}sv1alpha1.GroupVersion.Group,
-			Version: {{.KindLower}}sv1alpha1.GroupVersion.Version,
-			Kind:    "{{.Kind}}",
+			Group:   otelcollectorservicesv1alpha1.GroupVersion.Group,
+			Version: otelcollectorservicesv1alpha1.GroupVersion.Version,
+			Kind:    "OtelCollectorService",
 		}
 		if err := utils.RegisterGVKsAtServiceProvider(ctx, platformCluster.Client(), providerName, spGVK); err != nil {
 			setupLog.Error(err, "Failed to register GVK at ServiceProvider")
@@ -280,7 +286,7 @@ func main() {
 	}
 	// run (sp controller deployment)
 	onboardingCluster, err := clusterAccessManager.CreateAndWaitForCluster(ctx, "onboarding-run",
-		clustersv1alpha1.PURPOSE_ONBOARDING, onboardingScheme, adminPermissions)
+		clustersv1alpha1.PURPOSE_ONBOARDING, onboardingScheme, mcpPermissions)
 	if err != nil {
 		setupLog.Error(err, "Failed to create and wait for onboarding cluster access")
 	}
@@ -314,44 +320,30 @@ func main() {
 		os.Exit(1)
 	}
 	providerConfigUpdates := make(chan event.GenericEvent)
-	spr := spruntime.NewSPReconciler[*{{.KindLower}}sv1alpha1.{{.Kind}}, *{{.KindLower}}sv1alpha1.ProviderConfig](
-		func() *{{.KindLower}}sv1alpha1.{{.Kind}} { return &{{.KindLower}}sv1alpha1.{{.Kind}}{} },
+	spr := spruntime.NewSPReconciler[*otelcollectorservicesv1alpha1.OtelCollectorService, *otelcollectorservicesv1alpha1.ProviderConfig](
+		func() *otelcollectorservicesv1alpha1.OtelCollectorService {
+			return &otelcollectorservicesv1alpha1.OtelCollectorService{}
+		},
 	).
 		WithPlatformCluster(platformCluster).
 		WithOnboardingCluster(onboardingCluster).
-		WithServiceProviderReconciler(&controller.{{.Kind}}Reconciler{
+		WithServiceProviderReconciler(&controller.OtelCollectorServiceReconciler{
 			OnboardingCluster: onboardingCluster,
 			PlatformCluster:   platformCluster,
 			PodNamespace:      podNamespace,
 		}).
-		WithClusterAccessReconciler(clusteraccess.NewClusterAccessReconciler(platformCluster.Client(), "{{.Kind}}").
+		WithClusterAccessReconciler(clusteraccess.NewClusterAccessReconciler(platformCluster.Client(), "OtelCollectorService").
 			WithMCPScheme(mcpScheme).
-			{{- if .WithWorkloadCluster }}
-			WithWorkloadScheme(workloadScheme).
-			{{- end }}
 			WithRetryInterval(10 * time.Second).
-			WithMCPPermissions(adminPermissions).WithMCPRoleRefs([]common.RoleRef{
-			{
-				Name: "cluster-admin",
-				Kind: "ClusterRole",
-			}}).
-			{{- if .WithWorkloadCluster }}
-			WithWorkloadPermissions(adminPermissions).WithWorkloadRoleRefs([]common.RoleRef{
-			{
-				Name: "cluster-admin",
-				Kind: "ClusterRole",
-			},
-		}))
-			{{- else }}
+			WithMCPPermissions(mcpPermissions).
 			SkipWorkloadCluster(),
 		)
-			{{- end }}
-	if err := spr.SetupWithManager(mgr, "{{.KindLower}}", providerConfigUpdates); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "{{.Kind}}")
+	if err := spr.SetupWithManager(mgr, "otelcollectorservice", providerConfigUpdates); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "OtelCollectorService")
 		os.Exit(1)
 	}
-	pcr := spruntime.NewPCReconciler(providerName, func() *{{.KindLower}}sv1alpha1.ProviderConfig {
-		return &{{.KindLower}}sv1alpha1.ProviderConfig{}
+	pcr := spruntime.NewPCReconciler(providerName, func() *otelcollectorservicesv1alpha1.ProviderConfig {
+		return &otelcollectorservicesv1alpha1.ProviderConfig{}
 	}).
 		WithPlatformCluster(platformCluster).
 		WithUpdateChannel(providerConfigUpdates)
