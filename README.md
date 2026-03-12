@@ -120,13 +120,19 @@ data:
     exporters:
       debug:
         verbosity: detailed
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
     service:
+      extensions: [health_check]
       pipelines:
         traces:
           receivers: [otlp]
           processors: [batch]
           exporters: [debug]
 ```
+
+> **Important:** The `health_check` extension on port 13133 is required. The service provider configures liveness and readiness probes that check this endpoint. Without it, the collector pods will be restarted by Kubernetes.
 
 ### Secret: `otel-collector-secret`
 
