@@ -53,7 +53,7 @@ func TestServiceProvider(t *testing.T) {
 		).
 		Assess("create prerequisites and verify Ready",
 			func(ctx context.Context, t *testing.T, c *envconf.Config) context.Context {
-				mcpConfig, err := clusterutils.McpConfig("test-mcp")
+				mcpConfig, err := clusterutils.McpConfig()
 				if err != nil {
 					t.Error(err)
 					return ctx
@@ -80,7 +80,7 @@ func TestServiceProvider(t *testing.T) {
 		).
 		Assess("verify Deployment and Service exist in MCP",
 			func(ctx context.Context, t *testing.T, c *envconf.Config) context.Context {
-				mcpConfig, err := clusterutils.McpConfig("test-mcp")
+				mcpConfig, err := clusterutils.McpConfig()
 				if err != nil {
 					t.Error(err)
 					return ctx

@@ -5,8 +5,8 @@
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -84,7 +84,7 @@ func (in *OtelCollectorServiceSpec) DeepCopyInto(out *OtelCollectorServiceSpec) 
 	}
 	if in.Resources != nil {
 		in, out := &in.Resources, &out.Resources
-		*out = new(corev1.ResourceRequirements)
+		*out = new(v1.ResourceRequirements)
 		(*in).DeepCopyInto(*out)
 	}
 	if in.Namespace != nil {
@@ -109,7 +109,7 @@ func (in *OtelCollectorServiceStatus) DeepCopyInto(out *OtelCollectorServiceStat
 	*out = *in
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
-		*out = make([]v1.Condition, len(*in))
+		*out = make([]metav1.Condition, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -190,7 +190,7 @@ func (in *ProviderConfigSpec) DeepCopyInto(out *ProviderConfigSpec) {
 	*out = *in
 	if in.PollInterval != nil {
 		in, out := &in.PollInterval, &out.PollInterval
-		*out = new(v1.Duration)
+		*out = new(metav1.Duration)
 		**out = **in
 	}
 	if in.DefaultImage != nil {
@@ -205,12 +205,12 @@ func (in *ProviderConfigSpec) DeepCopyInto(out *ProviderConfigSpec) {
 	}
 	if in.ImagePullSecrets != nil {
 		in, out := &in.ImagePullSecrets, &out.ImagePullSecrets
-		*out = make([]corev1.LocalObjectReference, len(*in))
+		*out = make([]v1.LocalObjectReference, len(*in))
 		copy(*out, *in)
 	}
 	if in.DefaultResources != nil {
 		in, out := &in.DefaultResources, &out.DefaultResources
-		*out = new(corev1.ResourceRequirements)
+		*out = new(v1.ResourceRequirements)
 		(*in).DeepCopyInto(*out)
 	}
 	if in.DefaultNamespace != nil {
@@ -235,7 +235,7 @@ func (in *ProviderConfigStatus) DeepCopyInto(out *ProviderConfigStatus) {
 	*out = *in
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
-		*out = make([]v1.Condition, len(*in))
+		*out = make([]metav1.Condition, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}

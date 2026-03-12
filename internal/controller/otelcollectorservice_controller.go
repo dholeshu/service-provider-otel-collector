@@ -21,12 +21,13 @@ import (
 	"time"
 
 	"github.com/openmcp-project/controller-utils/pkg/clusters"
-	apiv1alpha1 "github.com/openmcp-project/service-provider-otel-collector/api/v1alpha1"
-	"github.com/openmcp-project/service-provider-otel-collector/internal/resources"
-	"github.com/openmcp-project/service-provider-otel-collector/pkg/spruntime"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	apiv1alpha1 "github.com/openmcp-project/service-provider-otel-collector/api/v1alpha1"
+	"github.com/openmcp-project/service-provider-otel-collector/internal/resources"
+	"github.com/openmcp-project/service-provider-otel-collector/pkg/spruntime"
 )
 
 const defaultRequeueInterval = 30 * time.Second
