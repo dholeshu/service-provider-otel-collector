@@ -43,7 +43,7 @@ On **deletion**, the service provider removes the Deployment and Service but lea
 
 ### Config Change Detection
 
-The service provider computes a SHA-256 hash of both the ConfigMap and Secret data and stores it as a pod template annotation (`otelcollector.services.openmcp.cloud/config-hash`). When either changes, the hash changes on the next reconciliation, which triggers a rolling restart of the collector pods to pick up the new configuration.
+The service provider computes a SHA-256 hash of both the ConfigMap and Secret data and stores it as a pod template annotation (`otelcollector.services.openmcp.cloud/config-hash`). When either resource changes, the hash changes on the next reconciliation, which triggers a rolling restart of the collector pods to pick up the new configuration.
 
 ## API
 
@@ -132,11 +132,11 @@ data:
           exporters: [debug]
 ```
 
-> **Important:** The `health_check` extension on port 13133 is required. The service provider configures liveness and readiness probes that check this endpoint. Without it, the collector pods will be restarted by Kubernetes.
+> **Important:** The `health_check` extension on port 13133 is **required**. The service provider configures liveness and readiness probes that check this endpoint. Without it, the collector pods will be continuously restarted by Kubernetes.
 
 ### Secret: `otel-collector-secret`
 
-Contains credentials or other sensitive values needed by the collector. All keys from this secret are injected as environment variables into the collector container. You can reference them in your OTEL config using the collector's `${env:KEY_NAME}` syntax.
+Contains credentials or other sensitive values needed by the collector. All keys from this secret are injected as environment variables into the collector container via `envFrom`. You can reference them in your OTEL config using the collector's `${env:KEY_NAME}` syntax.
 
 ```yaml
 apiVersion: v1
@@ -146,11 +146,9 @@ metadata:
   namespace: observability
 type: Opaque
 stringData:
-  # Example: XSUAA OAuth credentials
   TOKEN_URL: "https://your-auth-server.example.com/oauth/token"
   CLIENT_ID: "your-client-id"
   CLIENT_SECRET: "your-client-secret"
-  # Example: API key for a different exporter
   API_KEY: "your-api-key"
 ```
 
@@ -179,7 +177,7 @@ The collector Deployment and Service expose:
 | 4318 | TCP | otlp-http | OTLP HTTP receiver |
 | 8888 | TCP | metrics | Collector internal metrics |
 
-Health probes use port 13133 (the collector's built-in health check extension).
+Health probes use port 13133 (the collector's built-in `health_check` extension).
 
 ## Project Structure
 
@@ -188,7 +186,7 @@ Health probes use port 13133 (the collector's built-in health check extension).
 │   ├── v1alpha1/                    # API types (OtelCollectorService, ProviderConfig)
 │   └── crds/                        # Embedded CRD manifests
 ├── cmd/
-│   └── service-provider-otel-collector/  # Entrypoint
+│   └── service-provider-otel-collector/  # Entrypoint (init + run commands)
 ├── internal/
 │   ├── controller/                  # Reconciler (CreateOrUpdate / Delete)
 │   └── resources/                   # Kubernetes resource helpers
@@ -212,6 +210,7 @@ Health probes use port 13133 (the collector's built-in health check extension).
 - Go 1.24+
 - [Task](https://taskfile.dev/) (build system)
 - Access to an OpenMCP environment (for e2e tests)
+- On macOS: GNU `realpath` is required for e2e tests (`brew install coreutils`)
 
 ### Build
 
@@ -225,7 +224,7 @@ go build ./...
 # Unit tests
 task test
 
-# End-to-end tests (requires cluster access)
+# End-to-end tests (requires Docker for kind clusters)
 task test-e2e
 ```
 
@@ -243,16 +242,18 @@ task validate
 
 ### CLI Flags
 
-The service provider binary supports the following runtime flags:
+The service provider binary accepts a command (`init` or `run`) as its first argument, followed by flags:
 
-- `--environment`: Name of the environment
-- `--provider-name`: Name of the provider resource
-- `--metrics-bind-address`: Address for the metrics endpoint (default: `0`)
-- `--health-probe-bind-address`: Address for health probe endpoint (default: `:8081`)
-- `--leader-elect`: Enable leader election (default: `false`)
-- `--metrics-secure`: Serve metrics via HTTPS (default: `true`)
-- `--enable-http2`: Enable HTTP/2 (default: `false`)
-- `--verbosity`: Logging verbosity level
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--environment` | `""` | Name of the environment |
+| `--provider-name` | `""` | Name of the provider resource |
+| `--metrics-bind-address` | `0` | Address for the metrics endpoint (`:8443` for HTTPS, `:8080` for HTTP, `0` to disable) |
+| `--health-probe-bind-address` | `:8081` | Address for health probe endpoint |
+| `--leader-elect` | `false` | Enable leader election |
+| `--metrics-secure` | `true` | Serve metrics via HTTPS |
+| `--enable-http2` | `false` | Enable HTTP/2 for metrics and webhook servers |
+| `--verbosity` | | Logging verbosity level |
 
 ## Support, Feedback, Contributing
 
