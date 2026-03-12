@@ -1,72 +1,242 @@
-[![REUSE status](https://api.reuse.software/badge/github.com/openmcp-project/service-provider-template)](https://api.reuse.software/info/github.com/openmcp-project/service-provider-template)
+[![REUSE status](https://api.reuse.software/badge/github.com/openmcp-project/service-provider-otel-collector)](https://api.reuse.software/info/github.com/openmcp-project/service-provider-otel-collector)
 
-# service-provider-template
+# Service Provider: OTEL Collector
 
-## About this project
+An [OpenMCP](https://github.com/openmcp-project) Service Provider that automates the deployment and lifecycle management of [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) instances into Managed Control Planes (MCPs).
 
-A template for building @openmcp-project Service Providers
+## Overview
 
-## Requirements and Setup
+This service provider installs an OpenTelemetry Collector into each MCP that requests one. Instead of generating or templating the collector configuration, it follows a **bring-your-own-config** approach: the user provides the full OTEL collector configuration via a ConfigMap and XSUAA authentication credentials via a Secret directly in the MCP. The service provider waits for both to exist, then deploys the collector.
 
-1. Create a new repository based on this template.
-2. Execute the template to create a new `ServiceProvider`.
-3. Test your `ServiceProvider`.
+### Architecture
 
-The template includes a basic code generation command that lets you create a `ServiceProvider` for your Go module, API kind and group.
-You can also choose to add sample code to get a fully functional `ServiceProvider`.
-
-For a complete usage overview with the default settings, run:
-
-```shell
-go run ./cmd/template -h
+```
+Platform Cluster                  MCP (per tenant)
+┌─────────────────────┐           ┌──────────────────────────────────┐
+│  ProviderConfig     │           │  namespace: observability        │
+│  (cluster-scoped)   │           │                                  │
+│  - defaultImage     │           │  ConfigMap: otel-collector-conf  │ ← user creates
+│  - defaultVersion   │           │  Secret: otel-router-xsuaa-secret│ ← user creates
+│  - imagePullSecrets │           │                                  │
+└─────────────────────┘           │  Deployment: otel-collector      │ ← SP creates
+                                  │  Service: otel-collector         │ ← SP creates
+Onboarding Cluster                └──────────────────────────────────┘
+┌─────────────────────┐
+│  OtelCollectorService│ ← one per MCP
+│  (per-MCP overrides) │
+└─────────────────────┘
 ```
 
-Then execute the template, for example:
+### Reconciliation Flow
 
-```shell
-go run ./cmd/template -module github.com/yourorg/yourrepo -kind YourKind -group yourgroup
+1. Set status to `Progressing`
+2. Ensure the target namespace exists in the MCP
+3. Sync image pull secrets from the platform cluster to the MCP (if configured)
+4. **Check prerequisites** — does ConfigMap `otel-collector-conf` and Secret `otel-router-xsuaa-secret` exist?
+   - **No** — stay `Progressing` ("Waiting for ConfigMap and Secret"), requeue after 30s
+   - **Yes** — continue
+5. Create/update the Deployment (referencing the user-provided ConfigMap and Secret)
+6. Create/update the ClusterIP Service (ports 4317, 4318, 8888)
+7. Set status to `Ready`
+
+On **deletion**, the service provider removes the Deployment and Service but leaves the user-managed ConfigMap and Secret intact.
+
+### Config Change Detection
+
+The service provider computes a SHA-256 hash of the ConfigMap data and stores it as a pod template annotation (`otelcollector.services.openmcp.cloud/config-hash`). When the ConfigMap content changes, the hash changes on the next reconciliation, which triggers a rolling restart of the collector pods to pick up the new configuration.
+
+## API
+
+### OtelCollectorService (onboarding cluster)
+
+Created per MCP to request an OTEL collector installation. All fields are optional overrides — defaults come from the ProviderConfig.
+
+```yaml
+apiVersion: otelcollector.services.openmcp.cloud/v1alpha1
+kind: OtelCollectorService
+metadata:
+  name: my-mcp
+spec:
+  # All fields are optional — defaults from ProviderConfig are used if omitted
+  collectorImage: "otel/opentelemetry-collector-contrib"
+  collectorVersion: "0.146.1"
+  namespace: "observability"
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "512Mi"
 ```
 
-Running End-to-End tests:
+### ProviderConfig (platform cluster)
 
-```shell
+Cluster-scoped resource that provides default values for all MCPs.
+
+```yaml
+apiVersion: otelcollector.services.openmcp.cloud/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: otelcollectorservice
+spec:
+  pollInterval: 1m
+  defaultImage: "otel/opentelemetry-collector-contrib"
+  defaultVersion: "0.146.1"
+  defaultNamespace: "observability"
+  imagePullSecrets:
+    - name: my-registry-secret
+  defaultResources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+```
+
+## Prerequisites in the MCP
+
+The service provider **does not create or manage** these resources. They must be created by the user or another system directly in the MCP before the collector can be deployed.
+
+### ConfigMap: `otel-collector-conf`
+
+Contains the full OpenTelemetry Collector configuration under the key `otel-collector-config`.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-conf
+  namespace: observability
+data:
+  otel-collector-config: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch: {}
+    exporters:
+      debug:
+        verbosity: detailed
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+```
+
+### Secret: `otel-router-xsuaa-secret`
+
+Contains XSUAA OAuth credentials used by the collector for authenticated export.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: otel-router-xsuaa-secret
+  namespace: observability
+type: Opaque
+stringData:
+  token_url: "https://your-xsuaa-instance.authentication.sap.hana.ondemand.com/oauth/token"
+  client_id: "your-client-id"
+  client_secret: "your-client-secret"
+```
+
+## Exposed Ports
+
+The collector Deployment and Service expose:
+
+| Port | Protocol | Name | Purpose |
+|------|----------|------|---------|
+| 4317 | TCP | otlp-grpc | OTLP gRPC receiver |
+| 4318 | TCP | otlp-http | OTLP HTTP receiver |
+| 8888 | TCP | metrics | Collector internal metrics |
+
+Health probes use port 13133 (the collector's built-in health check extension).
+
+## Project Structure
+
+```
+├── api/
+│   ├── v1alpha1/                    # API types (OtelCollectorService, ProviderConfig)
+│   └── crds/                        # Embedded CRD manifests
+├── cmd/
+│   └── service-provider-otel-collector/  # Entrypoint
+├── internal/
+│   ├── controller/                  # Reconciler (CreateOrUpdate / Delete)
+│   └── resources/                   # Kubernetes resource helpers
+│       ├── constants.go             # Well-known names and labels
+│       ├── namespace.go             # Namespace reconciliation
+│       ├── prerequisites.go         # ConfigMap/Secret existence check + config hash
+│       ├── deployment.go            # Deployment and Service reconciliation
+│       ├── imagepullsecret.go       # Image pull secret sync (platform → MCP)
+│       └── cleanup.go              # Managed resource deletion
+├── pkg/
+│   └── spruntime/                   # Generic SP/PC reconciler framework
+├── test/
+│   └── e2e/                         # End-to-end tests
+└── hack/                            # Build tooling
+```
+
+## Development
+
+### Prerequisites
+
+- Go 1.24+
+- [Task](https://taskfile.dev/) (build system)
+- Access to an OpenMCP environment (for e2e tests)
+
+### Build
+
+```bash
+go build ./...
+```
+
+### Run Tests
+
+```bash
+# Unit tests
+task test
+
+# End-to-end tests (requires cluster access)
 task test-e2e
 ```
 
-## CLI Flags
+### Generate CRDs and DeepCopy
 
-### Template Generator Flags
+```bash
+task generate
+```
 
-The template generator (`cmd/template`) supports the following flags:
+### Validate (lint + formatting)
 
-- `-module`: Go module path (default: `github.com/openmcp-project/service-provider-template`)
-- `-kind`: GVK kind name (default: `FooService`)
-- `-group`: GVK group prefix, will be suffixed with `services.openmcp.cloud` (default: `foo`)
-- `-v`: Generate with sample code (default: `false`)
-- `-w`: Generate a service provider that reconciles its `DomainServiceAPI` on the [WorkloadCluster](https://openmcp-project.github.io/docs/about/design/service-provider#deployment-model) (default: `false`)
+```bash
+task validate
+```
 
-### Service Provider Runtime Flags
+### CLI Flags
 
-The generated service provider supports the following runtime flags:
+The service provider binary supports the following runtime flags:
 
-- `--verbosity`: Logging verbosity level (see [controller-runtime logging](https://github.com/kubernetes-sigs/controller-runtime/blob/main/TMP-LOGGING.md))
-- `--environment`: Name of the environment (required for operation)
-- `--provider-name`: Name of the provider resource (required for operation)
-- `--metrics-bind-address`: Address for the metrics endpoint (default: `0`, use `:8443` for HTTPS or `:8080` for HTTP)
+- `--environment`: Name of the environment
+- `--provider-name`: Name of the provider resource
+- `--metrics-bind-address`: Address for the metrics endpoint (default: `0`)
 - `--health-probe-bind-address`: Address for health probe endpoint (default: `:8081`)
-- `--leader-elect`: Enable leader election for controller manager (default: `false`)
-- `--metrics-secure`: Serve metrics endpoint securely via HTTPS (default: `true`)
-- `--enable-http2`: Enable HTTP/2 for metrics and webhook servers (default: `false`)
-
-For a complete list of available flags, run the generated binary with `-h` or `--help`.
+- `--leader-elect`: Enable leader election (default: `false`)
+- `--metrics-secure`: Serve metrics via HTTPS (default: `true`)
+- `--enable-http2`: Enable HTTP/2 (default: `false`)
+- `--verbosity`: Logging verbosity level
 
 ## Support, Feedback, Contributing
 
-This project is open to feature requests/suggestions, bug reports etc. via [GitHub issues](https://github.com/openmcp-project/service-provider-template/issues). Contribution and feedback are encouraged and always welcome. For more information about how to contribute, the project structure, as well as additional contribution information, see our [Contribution Guidelines](CONTRIBUTING.md).
+This project is open to feature requests/suggestions, bug reports etc. via [GitHub issues](https://github.com/openmcp-project/service-provider-otel-collector/issues). Contribution and feedback are encouraged and always welcome. For more information about how to contribute, the project structure, as well as additional contribution information, see our [Contribution Guidelines](CONTRIBUTING.md).
 
 ## Security / Disclosure
 
-If you find any bug that may be a security problem, please follow our instructions at [in our security policy](https://github.com/openmcp-project/service-provider-template/security/policy) on how to report it. Please do not create GitHub issues for security-related doubts or problems.
+If you find any bug that may be a security problem, please follow our instructions at [in our security policy](https://github.com/openmcp-project/service-provider-otel-collector/security/policy) on how to report it. Please do not create GitHub issues for security-related doubts or problems.
 
 ## Code of Conduct
 
@@ -74,4 +244,4 @@ We as members, contributors, and leaders pledge to make participation in our com
 
 ## Licensing
 
-Copyright 2025 SAP SE or an SAP affiliate company and service-provider-template contributors. Please see our [LICENSE](LICENSE) for copyright and license information. Detailed information including third-party components and their licensing/copyright information is available [via the REUSE tool](https://api.reuse.software/info/github.com/openmcp-project/service-provider-template).
+Copyright 2025 SAP SE or an SAP affiliate company and service-provider-otel-collector contributors. Please see our [LICENSE](LICENSE) for copyright and license information. Detailed information including third-party components and their licensing/copyright information is available [via the REUSE tool](https://api.reuse.software/info/github.com/openmcp-project/service-provider-otel-collector).
