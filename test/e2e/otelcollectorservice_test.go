@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/e2e-framework/klient/wait"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
@@ -17,6 +18,8 @@ import (
 	"github.com/openmcp-project/openmcp-testing/pkg/providers"
 	"github.com/openmcp-project/openmcp-testing/pkg/resources"
 )
+
+const targetNamespace = "observability"
 
 func TestServiceProvider(t *testing.T) {
 	var onboardingList unstructured.UnstructuredList
@@ -30,17 +33,32 @@ func TestServiceProvider(t *testing.T) {
 		Setup(providers.CreateMCP("test-mcp")).
 		Assess("verify service stays Progressing without prerequisites",
 			func(ctx context.Context, t *testing.T, c *envconf.Config) context.Context {
+				// Retry creating onboarding objects to allow CRD discovery to refresh
+				var objList *unstructured.UnstructuredList
+				var lastErr error
+				deadline := time.Now().Add(2 * time.Minute)
+				for time.Now().Before(deadline) {
+					onboardingConfig, err := clusterutils.OnboardingConfig()
+					if err != nil {
+						t.Error(err)
+						return ctx
+					}
+					objList, lastErr = resources.CreateObjectsFromDir(ctx, onboardingConfig, "onboarding")
+					if lastErr == nil {
+						break
+					}
+					time.Sleep(5 * time.Second)
+				}
+				if lastErr != nil {
+					t.Errorf("failed to create onboarding cluster objects: %v", lastErr)
+					return ctx
+				}
+				// Service should be Progressing (waiting for ConfigMap and Secret)
 				onboardingConfig, err := clusterutils.OnboardingConfig()
 				if err != nil {
 					t.Error(err)
 					return ctx
 				}
-				objList, err := resources.CreateObjectsFromDir(ctx, onboardingConfig, "onboarding")
-				if err != nil {
-					t.Errorf("failed to create onboarding cluster objects: %v", err)
-					return ctx
-				}
-				// Service should be Progressing (waiting for ConfigMap and Secret)
 				for _, obj := range objList.Items {
 					if err := wait.For(conditions.Match(&obj, onboardingConfig, "Ready", corev1.ConditionFalse),
 						wait.WithTimeout(2*time.Minute)); err != nil {
@@ -53,9 +71,16 @@ func TestServiceProvider(t *testing.T) {
 		).
 		Assess("create prerequisites and verify Ready",
 			func(ctx context.Context, t *testing.T, c *envconf.Config) context.Context {
-				mcpConfig, err := clusterutils.McpConfig()
+				// Get MCP config with observability namespace so fixtures are created there
+				mcpConfig, err := clusterutils.ConfigByPrefix("mcp", targetNamespace)
 				if err != nil {
 					t.Error(err)
+					return ctx
+				}
+				// Create the observability namespace in the MCP first
+				ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: targetNamespace}}
+				if err := mcpConfig.Client().Resources().Create(ctx, ns); err != nil {
+					t.Errorf("failed to create namespace %s: %v", targetNamespace, err)
 					return ctx
 				}
 				// Create ConfigMap and Secret in MCP
@@ -92,12 +117,12 @@ func TestServiceProvider(t *testing.T) {
 				}
 				// Check Deployment
 				var deployment appsv1.Deployment
-				if err := mcpClient.Resources("observability").Get(ctx, "otel-collector", "observability", &deployment); err != nil {
+				if err := mcpClient.Resources(targetNamespace).Get(ctx, "otel-collector", targetNamespace, &deployment); err != nil {
 					t.Errorf("deployment not found: %v", err)
 				}
 				// Check Service
 				var svc corev1.Service
-				if err := mcpClient.Resources("observability").Get(ctx, "otel-collector", "observability", &svc); err != nil {
+				if err := mcpClient.Resources(targetNamespace).Get(ctx, "otel-collector", targetNamespace, &svc); err != nil {
 					t.Errorf("service not found: %v", err)
 				}
 				return ctx

@@ -277,9 +277,11 @@ func (r *SPReconciler[T, PC]) createOrUpdate(ctx context.Context, obj T, pc PC) 
 	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(obj)}
 	clusters, res, err := r.clusters(ctx, req)
 	if err != nil {
+		StatusProgressing(obj, "ClusterAccessError", "Failed to setup cluster access")
 		return ctrl.Result{}, err
 	}
 	if res.RequeueAfter > 0 {
+		StatusProgressing(obj, "Reconciling", "Setting up cluster access")
 		return res, nil
 	}
 	return r.serviceProviderReconciler.CreateOrUpdate(ctx, obj, pc, clusters)

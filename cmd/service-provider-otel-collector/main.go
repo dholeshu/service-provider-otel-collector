@@ -246,6 +246,25 @@ func main() {
 					Resources: []string{"deployments"},
 					Verbs:     []string{"get", "list", "create", "update", "delete"},
 				},
+				{
+					APIGroups: []string{"apiextensions.k8s.io"},
+					Resources: []string{"customresourcedefinitions"},
+					Verbs:     []string{"get", "create", "update"},
+				},
+			},
+		},
+	}
+	// Onboarding cluster needs broad permissions: the controller-runtime manager
+	// runs against the onboarding cluster and needs to list/watch our CRDs,
+	// manage finalizers, update status, and install CRDs during init.
+	onboardingPermissions := []clustersv1alpha1.PermissionsRequest{
+		{
+			Rules: []rbacv1.PolicyRule{
+				{
+					APIGroups: []string{"*"},
+					Resources: []string{"*"},
+					Verbs:     []string{"*"},
+				},
 			},
 		},
 	}
@@ -258,7 +277,7 @@ func main() {
 	// init (job that installs CRDs)
 	if command == "init" {
 		onboardingCluster, err := clusterAccessManager.CreateAndWaitForCluster(ctx, "onboarding-init",
-			clustersv1alpha1.PURPOSE_ONBOARDING, onboardingScheme, mcpPermissions)
+			clustersv1alpha1.PURPOSE_ONBOARDING, onboardingScheme, onboardingPermissions)
 
 		if err != nil {
 			setupLog.Error(err, "Failed to create and wait for onboarding cluster access")
@@ -287,7 +306,7 @@ func main() {
 	}
 	// run (sp controller deployment)
 	onboardingCluster, err := clusterAccessManager.CreateAndWaitForCluster(ctx, "onboarding-run",
-		clustersv1alpha1.PURPOSE_ONBOARDING, onboardingScheme, mcpPermissions)
+		clustersv1alpha1.PURPOSE_ONBOARDING, onboardingScheme, onboardingPermissions)
 	if err != nil {
 		setupLog.Error(err, "Failed to create and wait for onboarding cluster access")
 	}
