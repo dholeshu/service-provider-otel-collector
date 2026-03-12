@@ -6,8 +6,10 @@ const (
 	// ConfigMapKey is the key in the ConfigMap that holds the OTEL collector config
 	ConfigMapKey = "otel-collector-config"
 
-	// SecretName is the well-known name for the XSUAA credentials secret in the MCP
-	SecretName = "otel-router-xsuaa-secret"
+	// SecretName is the well-known name for the collector credentials secret in the MCP.
+	// All keys are injected as environment variables into the collector container
+	// and can be referenced in the OTEL config via ${env:KEY_NAME}.
+	SecretName = "otel-collector-secret"
 
 	// DeploymentName is the name for the OTEL collector deployment
 	DeploymentName = "otel-collector"

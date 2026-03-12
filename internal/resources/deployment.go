@@ -64,32 +64,10 @@ func ReconcileDeployment(ctx context.Context, c client.Client, ns string, opts D
 								"/otelcol-contrib",
 								"--config=/conf/otel-collector-config.yaml",
 							},
-							Env: []corev1.EnvVar{
+							EnvFrom: []corev1.EnvFromSource{
 								{
-									Name: "OTEL_XSUAA_TOKEN_URL",
-									ValueFrom: &corev1.EnvVarSource{
-										SecretKeyRef: &corev1.SecretKeySelector{
-											LocalObjectReference: corev1.LocalObjectReference{Name: SecretName},
-											Key:                  "token_url",
-										},
-									},
-								},
-								{
-									Name: "OTEL_XSUAA_CLIENT_ID",
-									ValueFrom: &corev1.EnvVarSource{
-										SecretKeyRef: &corev1.SecretKeySelector{
-											LocalObjectReference: corev1.LocalObjectReference{Name: SecretName},
-											Key:                  "client_id",
-										},
-									},
-								},
-								{
-									Name: "OTEL_XSUAA_CLIENT_SECRET",
-									ValueFrom: &corev1.EnvVarSource{
-										SecretKeyRef: &corev1.SecretKeySelector{
-											LocalObjectReference: corev1.LocalObjectReference{Name: SecretName},
-											Key:                  "client_secret",
-										},
+									SecretRef: &corev1.SecretEnvSource{
+										LocalObjectReference: corev1.LocalObjectReference{Name: SecretName},
 									},
 								},
 							},

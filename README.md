@@ -6,7 +6,7 @@ An [OpenMCP](https://github.com/openmcp-project) Service Provider that automates
 
 ## Overview
 
-This service provider installs an OpenTelemetry Collector into each MCP that requests one. Instead of generating or templating the collector configuration, it follows a **bring-your-own-config** approach: the user provides the full OTEL collector configuration via a ConfigMap and XSUAA authentication credentials via a Secret directly in the MCP. The service provider waits for both to exist, then deploys the collector.
+This service provider installs an OpenTelemetry Collector into each MCP that requests one. Instead of generating or templating the collector configuration, it follows a **bring-your-own-config** approach: the user provides the full OTEL collector configuration via a ConfigMap and any credentials via a generic Secret directly in the MCP. All secret keys are injected as environment variables into the collector container and can be referenced in the OTEL config using `${env:KEY_NAME}`. The service provider waits for both resources to exist, then deploys the collector.
 
 ### Architecture
 
@@ -16,7 +16,7 @@ Platform Cluster                  MCP (per tenant)
 │  ProviderConfig     │           │  namespace: observability        │
 │  (cluster-scoped)   │           │                                  │
 │  - defaultImage     │           │  ConfigMap: otel-collector-conf  │ ← user creates
-│  - defaultVersion   │           │  Secret: otel-router-xsuaa-secret│ ← user creates
+│  - defaultVersion   │           │  Secret: otel-collector-secret   │ ← user creates
 │  - imagePullSecrets │           │                                  │
 └─────────────────────┘           │  Deployment: otel-collector      │ ← SP creates
                                   │  Service: otel-collector         │ ← SP creates
@@ -32,7 +32,7 @@ Onboarding Cluster                └──────────────�
 1. Set status to `Progressing`
 2. Ensure the target namespace exists in the MCP
 3. Sync image pull secrets from the platform cluster to the MCP (if configured)
-4. **Check prerequisites** — does ConfigMap `otel-collector-conf` and Secret `otel-router-xsuaa-secret` exist?
+4. **Check prerequisites** — does ConfigMap `otel-collector-conf` and Secret `otel-collector-secret` exist?
    - **No** — stay `Progressing` ("Waiting for ConfigMap and Secret"), requeue after 30s
    - **Yes** — continue
 5. Create/update the Deployment (referencing the user-provided ConfigMap and Secret)
@@ -43,7 +43,7 @@ On **deletion**, the service provider removes the Deployment and Service but lea
 
 ### Config Change Detection
 
-The service provider computes a SHA-256 hash of the ConfigMap data and stores it as a pod template annotation (`otelcollector.services.openmcp.cloud/config-hash`). When the ConfigMap content changes, the hash changes on the next reconciliation, which triggers a rolling restart of the collector pods to pick up the new configuration.
+The service provider computes a SHA-256 hash of both the ConfigMap and Secret data and stores it as a pod template annotation (`otelcollector.services.openmcp.cloud/config-hash`). When either changes, the hash changes on the next reconciliation, which triggers a rolling restart of the collector pods to pick up the new configuration.
 
 ## API
 
@@ -128,21 +128,39 @@ data:
           exporters: [debug]
 ```
 
-### Secret: `otel-router-xsuaa-secret`
+### Secret: `otel-collector-secret`
 
-Contains XSUAA OAuth credentials used by the collector for authenticated export.
+Contains credentials or other sensitive values needed by the collector. All keys from this secret are injected as environment variables into the collector container. You can reference them in your OTEL config using the collector's `${env:KEY_NAME}` syntax.
 
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: otel-router-xsuaa-secret
+  name: otel-collector-secret
   namespace: observability
 type: Opaque
 stringData:
-  token_url: "https://your-xsuaa-instance.authentication.sap.hana.ondemand.com/oauth/token"
-  client_id: "your-client-id"
-  client_secret: "your-client-secret"
+  # Example: XSUAA OAuth credentials
+  TOKEN_URL: "https://your-auth-server.example.com/oauth/token"
+  CLIENT_ID: "your-client-id"
+  CLIENT_SECRET: "your-client-secret"
+  # Example: API key for a different exporter
+  API_KEY: "your-api-key"
+```
+
+Then reference them in the ConfigMap config:
+
+```yaml
+extensions:
+  oauth2client:
+    client_id: "${env:CLIENT_ID}"
+    client_secret: "${env:CLIENT_SECRET}"
+    token_url: "${env:TOKEN_URL}"
+exporters:
+  otlphttp:
+    endpoint: https://my-endpoint
+    headers:
+      Authorization: "Bearer ${env:API_KEY}"
 ```
 
 ## Exposed Ports

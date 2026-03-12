@@ -62,7 +62,7 @@ func CheckPrerequisites(ctx context.Context, c client.Client, ns string) (Prereq
 		}, nil
 	}
 
-	configHash := computeConfigHash(cm)
+	configHash := computeConfigHash(cm, secret)
 
 	return PrerequisiteResult{
 		Ready:      true,
@@ -70,12 +70,16 @@ func CheckPrerequisites(ctx context.Context, c client.Client, ns string) (Prereq
 	}, nil
 }
 
-// computeConfigHash computes a SHA-256 hash of the ConfigMap data to detect changes.
-func computeConfigHash(cm *corev1.ConfigMap) string {
+// computeConfigHash computes a SHA-256 hash of the ConfigMap and Secret data to detect changes.
+func computeConfigHash(cm *corev1.ConfigMap, secret *corev1.Secret) string {
 	h := sha256.New()
 	for k, v := range cm.Data {
 		h.Write([]byte(k))
 		h.Write([]byte(v))
+	}
+	for k, v := range secret.Data {
+		h.Write([]byte(k))
+		h.Write(v)
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
