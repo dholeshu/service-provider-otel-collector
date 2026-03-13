@@ -6,7 +6,7 @@ An [OpenMCP](https://github.com/openmcp-project) Service Provider that automates
 
 ## Overview
 
-This service provider installs an OpenTelemetry Collector into each MCP that requests one. Instead of generating or templating the collector configuration, it follows a **bring-your-own-config** approach: the user provides the full OTEL collector configuration via a ConfigMap and any credentials via a generic Secret directly in the MCP. All secret keys are injected as environment variables into the collector container and can be referenced in the OTEL config using `${env:KEY_NAME}`. The service provider waits for both resources to exist, then deploys the collector.
+This service provider installs an OpenTelemetry Collector into each MCP that requests one. Instead of generating or templating the collector configuration, it follows a **bring-your-own-config** approach: the user provides the full OTEL collector configuration via a ConfigMap and any credentials via a generic Secret directly in the MCP. All secret keys are injected as environment variables into the collector container via `envFrom` and can be referenced in the OTEL config using `${env:KEY_NAME}`. The service provider waits for both resources to exist, then deploys the collector.
 
 ### Architecture
 
@@ -43,7 +43,7 @@ On **deletion**, the service provider removes the Deployment and Service but lea
 
 ### Config Change Detection
 
-The service provider computes a SHA-256 hash of both the ConfigMap and Secret data and stores it as a pod template annotation (`otelcollector.services.openmcp.cloud/config-hash`). When either resource changes, the hash changes on the next reconciliation, which triggers a rolling restart of the collector pods to pick up the new configuration.
+The service provider computes a deterministic SHA-256 hash of both the ConfigMap and Secret data (keys sorted alphabetically) and stores it as a pod template annotation (`otelcollector.services.openmcp.cloud/config-hash`). When either resource changes, the hash changes on the next reconciliation, which triggers a rolling restart of the collector pods to pick up the new configuration.
 
 ## API
 
@@ -120,6 +120,11 @@ data:
     exporters:
       debug:
         verbosity: detailed
+      otlphttp:
+        endpoint: "https://my-backend.example.com/v1/traces"
+        headers:
+          x-client-id: "${env:CLIENT_ID}"
+          x-token-url: "${env:TOKEN_URL}"
     extensions:
       health_check:
         endpoint: 0.0.0.0:13133
@@ -129,7 +134,7 @@ data:
         traces:
           receivers: [otlp]
           processors: [batch]
-          exporters: [debug]
+          exporters: [debug, otlphttp]
 ```
 
 > **Important:** The `health_check` extension on port 13133 is **required**. The service provider configures liveness and readiness probes that check this endpoint. Without it, the collector pods will be continuously restarted by Kubernetes.
@@ -149,22 +154,21 @@ stringData:
   TOKEN_URL: "https://your-auth-server.example.com/oauth/token"
   CLIENT_ID: "your-client-id"
   CLIENT_SECRET: "your-client-secret"
-  API_KEY: "your-api-key"
 ```
 
 Then reference them in the ConfigMap config:
 
 ```yaml
+exporters:
+  otlphttp:
+    endpoint: https://my-endpoint
+    headers:
+      x-client-id: "${env:CLIENT_ID}"
 extensions:
   oauth2client:
     client_id: "${env:CLIENT_ID}"
     client_secret: "${env:CLIENT_SECRET}"
     token_url: "${env:TOKEN_URL}"
-exporters:
-  otlphttp:
-    endpoint: https://my-endpoint
-    headers:
-      Authorization: "Bearer ${env:API_KEY}"
 ```
 
 ## Exposed Ports
@@ -200,15 +204,18 @@ Health probes use port 13133 (the collector's built-in `health_check` extension)
 │   └── spruntime/                   # Generic SP/PC reconciler framework
 ├── test/
 │   └── e2e/                         # End-to-end tests
-└── hack/                            # Build tooling
+├── hack/                            # Build tooling
+├── Dockerfile                       # Production image (SAP-compliant base)
+└── Dockerfile.local                 # Local development image (ARM64/macOS)
 ```
 
 ## Development
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.25+
 - [Task](https://taskfile.dev/) (build system)
+- Docker (for building images and running e2e tests)
 - Access to an OpenMCP environment (for e2e tests)
 - On macOS: GNU `realpath` is required for e2e tests (`brew install coreutils`)
 
@@ -216,6 +223,16 @@ Health probes use port 13133 (the collector's built-in `health_check` extension)
 
 ```bash
 go build ./...
+```
+
+### Docker
+
+```bash
+# Production image (linux/amd64, SAP-compliant base)
+docker build -t service-provider-otel-collector:latest .
+
+# Local development image (native platform, ARM64/macOS compatible)
+docker build -f Dockerfile.local -t service-provider-otel-collector:local .
 ```
 
 ### Run Tests
