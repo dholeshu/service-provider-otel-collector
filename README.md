@@ -204,9 +204,7 @@ Health probes use port 13133 (the collector's built-in `health_check` extension)
 │   └── spruntime/                   # Generic SP/PC reconciler framework
 ├── test/
 │   └── e2e/                         # End-to-end tests
-├── hack/                            # Build tooling
-├── Dockerfile                       # Production image (SAP-compliant base)
-└── Dockerfile.local                 # Local development image (ARM64/macOS)
+└── hack/                            # Build tooling (includes Dockerfile template)
 ```
 
 ## Development
@@ -228,11 +226,8 @@ go build ./...
 ### Docker
 
 ```bash
-# Production image (linux/amd64, SAP-compliant base)
-docker build -t service-provider-otel-collector:latest .
-
-# Local development image (native platform, ARM64/macOS compatible)
-docker build -f Dockerfile.local -t service-provider-otel-collector:local .
+# Build image for current platform (used by e2e tests)
+task build:img:build-test
 ```
 
 ### Run Tests
