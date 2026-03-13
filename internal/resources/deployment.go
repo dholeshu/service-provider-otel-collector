@@ -40,90 +40,94 @@ func ReconcileDeployment(ctx context.Context, c client.Client, ns string, opts D
 
 	_, err := ctrl.CreateOrUpdate(ctx, c, deployment, func() error {
 		deployment.Labels = labels
-		deployment.Spec = appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{
+
+		// Only set selector on creation — it is immutable after that.
+		if deployment.Spec.Selector == nil {
+			deployment.Spec.Selector = &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					AppLabel: AppValue,
 				},
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
-					Annotations: map[string]string{
-						ConfigHashAnnotation: opts.ConfigHash,
+			}
+		}
+
+		deployment.Spec.Replicas = &replicas
+
+		// Update pod template metadata
+		deployment.Spec.Template.Labels = labels
+		if deployment.Spec.Template.Annotations == nil {
+			deployment.Spec.Template.Annotations = map[string]string{}
+		}
+		deployment.Spec.Template.Annotations[ConfigHashAnnotation] = opts.ConfigHash
+
+		// Update pod spec
+		deployment.Spec.Template.Spec.ImagePullSecrets = opts.ImagePullSecrets
+		deployment.Spec.Template.Spec.Volumes = []corev1.Volume{
+			{
+				Name: ConfigVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: ConfigMapName,
+						},
+						Items: []corev1.KeyToPath{
+							{
+								Key:  ConfigMapKey,
+								Path: "otel-collector-config.yaml",
+							},
+						},
 					},
 				},
-				Spec: corev1.PodSpec{
-					ImagePullSecrets: opts.ImagePullSecrets,
-					Containers: []corev1.Container{
-						{
-							Name:  ContainerName,
-							Image: imageRef,
-							Command: []string{
-								"/otelcol-contrib",
-								"--config=/conf/otel-collector-config.yaml",
-							},
-							EnvFrom: []corev1.EnvFromSource{
-								{
-									SecretRef: &corev1.SecretEnvSource{
-										LocalObjectReference: corev1.LocalObjectReference{Name: SecretName},
-									},
-								},
-							},
-							Ports: []corev1.ContainerPort{
-								{Name: "otlp-grpc", ContainerPort: 4317, Protocol: corev1.ProtocolTCP},
-								{Name: "otlp-http", ContainerPort: 4318, Protocol: corev1.ProtocolTCP},
-								{Name: "metrics", ContainerPort: 8888, Protocol: corev1.ProtocolTCP},
-							},
-							LivenessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{
-									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/",
-										Port: intstr.FromInt(13133),
-									},
-								},
-							},
-							ReadinessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{
-									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/",
-										Port: intstr.FromInt(13133),
-									},
-								},
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      ConfigVolumeName,
-									MountPath: "/conf",
-								},
-							},
-						},
+			},
+		}
+
+		// Build the desired container spec
+		container := corev1.Container{
+			Name:  ContainerName,
+			Image: imageRef,
+			Command: []string{
+				"/otelcol-contrib",
+				"--config=/conf/otel-collector-config.yaml",
+			},
+			EnvFrom: []corev1.EnvFromSource{
+				{
+					SecretRef: &corev1.SecretEnvSource{
+						LocalObjectReference: corev1.LocalObjectReference{Name: SecretName},
 					},
-					Volumes: []corev1.Volume{
-						{
-							Name: ConfigVolumeName,
-							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: ConfigMapName,
-									},
-									Items: []corev1.KeyToPath{
-										{
-											Key:  ConfigMapKey,
-											Path: "otel-collector-config.yaml",
-										},
-									},
-								},
-							},
-						},
+				},
+			},
+			Ports: []corev1.ContainerPort{
+				{Name: "otlp-grpc", ContainerPort: 4317, Protocol: corev1.ProtocolTCP},
+				{Name: "otlp-http", ContainerPort: 4318, Protocol: corev1.ProtocolTCP},
+				{Name: "metrics", ContainerPort: 8888, Protocol: corev1.ProtocolTCP},
+			},
+			LivenessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path: "/",
+						Port: intstr.FromInt(13133),
 					},
+				},
+			},
+			ReadinessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path: "/",
+						Port: intstr.FromInt(13133),
+					},
+				},
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{
+					Name:      ConfigVolumeName,
+					MountPath: "/conf",
 				},
 			},
 		}
 		if opts.Resources != nil {
-			deployment.Spec.Template.Spec.Containers[0].Resources = *opts.Resources
+			container.Resources = *opts.Resources
 		}
+
+		deployment.Spec.Template.Spec.Containers = []corev1.Container{container}
 		return nil
 	})
 	return err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"sort"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -71,15 +72,29 @@ func CheckPrerequisites(ctx context.Context, c client.Client, ns string) (Prereq
 }
 
 // computeConfigHash computes a SHA-256 hash of the ConfigMap and Secret data to detect changes.
+// Keys are sorted to ensure deterministic output regardless of Go map iteration order.
 func computeConfigHash(cm *corev1.ConfigMap, secret *corev1.Secret) string {
 	h := sha256.New()
-	for k, v := range cm.Data {
-		h.Write([]byte(k))
-		h.Write([]byte(v))
+
+	cmKeys := make([]string, 0, len(cm.Data))
+	for k := range cm.Data {
+		cmKeys = append(cmKeys, k)
 	}
-	for k, v := range secret.Data {
+	sort.Strings(cmKeys)
+	for _, k := range cmKeys {
 		h.Write([]byte(k))
-		h.Write(v)
+		h.Write([]byte(cm.Data[k]))
 	}
+
+	secretKeys := make([]string, 0, len(secret.Data))
+	for k := range secret.Data {
+		secretKeys = append(secretKeys, k)
+	}
+	sort.Strings(secretKeys)
+	for _, k := range secretKeys {
+		h.Write([]byte(k))
+		h.Write(secret.Data[k])
+	}
+
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
